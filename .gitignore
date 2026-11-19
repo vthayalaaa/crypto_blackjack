@@ -1,0 +1,15 @@
+node_modules/
+.next/
+target/
+.anchor/
+test-ledger/
+dist/
+*.log
+.DS_Store
+web/tsconfig.tsbuildinfo
+data/
+web/data/
+.env
+.env.local
+web/.env.local
+*-keypair.json

@@ -1,0 +1,37 @@
+/** Byte offsets of the Game account payload. The account also has an 8-byte discriminator. */
+export const OFF = {
+  player: 0,
+  dealer: 32,
+  invite: 64,
+  stake: 96,
+  gameId: 104,
+  status: 112,
+  outcome: 113,
+  playerCommits: 114,
+  dealerCommits: 626,
+  playerCards: 1138,
+  playerLen: 1149,
+  dealerCards: 1150,
+  dealerLen: 1161,
+  deckMask: 1162,
+  nextPlayerHit: 1170,
+  deadline: 1171,
+  createdAt: 1179,
+  bump: 1187,
+  vaultBump: 1188,
+  staged: 1189,
+  stagedLen: 1413,
+  end: 1414,
+} as const;
+
+export const STATUS = [
+  "Waiting for the dealer",
+  "Dealer reveals the opening cards",
+  "Player turns the opening cards",
+  "Player's turn",
+  "Dealer reveals the hit card",
+  "Player takes the hit card",
+  "Dealer reveals the hole card",
+  "Player turns the dealer hand",
+  "Settled",
+] as const;

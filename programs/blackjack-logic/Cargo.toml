@@ -1,0 +1,8 @@
+[package]
+name = "blackjack-logic"
+version = "0.1.0"
+edition = "2021"
+description = "Pure blackjack rules and deck indexing for the escrow program"
+license = "MIT"
+
+[dependencies]
