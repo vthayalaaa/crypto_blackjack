@@ -2,21 +2,22 @@
 
 import { useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import type { Cluster } from "../lib/table-view";
+import { chainFromUrl } from "../lib/table-view";
 import { HouseTable } from "./HouseTable";
 import { useCluster } from "./Providers";
 
-function chainFromUrl(value: string | null): Cluster | null {
-  if (value === "localnet" || value === "mainnet" || value === "sepolia" || value === "ethereum") return value;
-  return null;
-}
-
-export function Casino() {
+export function Casino({
+  supabaseUrl = "",
+  supabaseKey = "",
+}: {
+  supabaseUrl?: string;
+  supabaseKey?: string;
+}) {
   const params = useSearchParams();
   const { cluster, setCluster } = useCluster();
   const fromUrl = chainFromUrl(params.get("chain"));
   useEffect(() => {
-    if (fromUrl) setCluster(fromUrl);
+    setCluster(fromUrl ?? "mainnet");
   }, [fromUrl, setCluster]);
-  return <HouseTable network={fromUrl ?? cluster} />;
+  return <HouseTable network={fromUrl ?? cluster} supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />;
 }

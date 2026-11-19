@@ -21,7 +21,9 @@ export const OFF = {
   vaultBump: 1188,
   staged: 1189,
   stagedLen: 1413,
-  end: 1414,
+  playerOwed: 1414,
+  dealerOwed: 1422,
+  end: 1430,
 } as const;
 
 export const STATUS = [

@@ -25,6 +25,8 @@ test("game account fields are packed without gaps", () => {
     ["vaultBump", OFF.vaultBump, 1],
     ["staged", OFF.staged, 224],
     ["stagedLen", OFF.stagedLen, 1],
+    ["playerOwed", OFF.playerOwed, 8],
+    ["dealerOwed", OFF.dealerOwed, 8],
   ] as const;
   let cursor = 0;
   for (const [name, offset, size] of sizes) {
@@ -32,5 +34,5 @@ test("game account fields are packed without gaps", () => {
     cursor += size;
   }
   assert.equal(cursor, OFF.end);
-  assert.equal(OFF.end, 1414);
+  assert.equal(OFF.end, 1430);
 });

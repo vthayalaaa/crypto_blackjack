@@ -33,7 +33,7 @@ export function useCluster() {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  const [cluster, setCluster] = useState<ClusterName>("devnet");
+  const [cluster, setCluster] = useState<ClusterName>("mainnet");
   // Ethereum pages still mount the Solana providers. Keep that RPC off mainnet.
   const endpoint = cluster === "mainnet"
     ? SOLANA_ENDPOINTS.mainnet
@@ -72,6 +72,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   function onWalletError(error: WalletError) {
     if (error.name === "WalletWindowClosedError") return;
+    if (/already pending/i.test(error.message)) {
+      setWalletError("A wallet prompt is already open. Approve it there, or close it and choose the wallet again.");
+      return;
+    }
     setWalletError(error.message || "The wallet could not connect.");
   }
 

@@ -1,5 +1,12 @@
 //! Two-player blackjack. Both wallets fund a system-owned vault PDA.
-//! The winner is paid the whole vault. A tie returns both stakes.
+//! The winner is owed the whole vault. A tie owes each side half.
+//!
+//! Settlement never transfers to a seat that is not signing. It records what
+//! each seat is owed, and each seat takes its share with `withdraw`, to any
+//! account it chooses. A failed transfer cannot be caught on Solana: it reverts
+//! the whole instruction. If settlement paid the other seat directly, that seat
+//! could put its account in a state that refuses lamports and the hand could
+//! never resolve.
 //!
 //! Neither player may choose the cards. Each seat posts 16 SHA-256
 //! commitments before any secret is revealed. A card is
@@ -39,7 +46,7 @@ const _: () = assert!(Game::INIT_SPACE == GAME_PAYLOAD);
 pub mod blackjack {
     use super::*;
     use super::{
-        clear_staged, deal, hit_index, outcome_from, pay, push_card, refresh_deadline, settle,
+        clear_staged, credit, deal, hit_index, outcome_from, pay, push_card, refresh_deadline,
         transfer_sol, verify_seed, DEALER_HIT_START, MAX_STAKE, MIN_STAKE,
     };
 
@@ -76,6 +83,8 @@ pub mod blackjack {
         game.vault_bump = ctx.bumps.vault;
         game.staged = [[0u8; 32]; 7];
         game.staged_len = 0;
+        game.player_owed = 0;
+        game.dealer_owed = 0;
 
         transfer_sol(
             &ctx.accounts.system_program,
@@ -201,6 +210,7 @@ pub mod blackjack {
     }
 
     pub fn player_reveal_hit(ctx: Context<PlayerMove>, seed: [u8; 32]) -> Result<()> {
+        let pot = ctx.accounts.vault.lamports();
         let busted = {
             let game = &mut *ctx.accounts.game;
             require!(
@@ -222,6 +232,7 @@ pub mod blackjack {
             if total > 21 {
                 game.outcome = Outcome::DealerWins;
                 game.status = GameStatus::Resolved;
+                credit(game, pot)?;
                 true
             } else if total == 21 {
                 game.status = GameStatus::StandDealerReveal;
@@ -234,14 +245,6 @@ pub mod blackjack {
             }
         };
         if busted {
-            let pot = ctx.accounts.vault.lamports();
-            pay(
-                &ctx.accounts.game,
-                &ctx.accounts.vault,
-                &ctx.accounts.dealer,
-                &ctx.accounts.system_program,
-                pot,
-            )?;
             msg!("player busts");
         }
         Ok(())
@@ -273,7 +276,8 @@ pub mod blackjack {
         hole: [u8; 32],
         hits: [[u8; 32]; 6],
     ) -> Result<()> {
-        let outcome = {
+        let pot = ctx.accounts.vault.lamports();
+        {
             let game = &mut *ctx.accounts.game;
             require!(
                 game.status == GameStatus::StandPlayerReveal,
@@ -301,17 +305,45 @@ pub mod blackjack {
             game.outcome = outcome_from(code);
             game.status = GameStatus::Resolved;
             clear_staged(game);
+            credit(game, pot)?;
             msg!("settled {} {}", player_total, dealer_total);
-            game.outcome
+        }
+        Ok(())
+    }
+
+    /// Take this seat's share of a resolved hand. The signer picks where it goes,
+    /// so a seat whose own wallet cannot receive lamports can still be paid.
+    pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {
+        let claimant = ctx.accounts.claimant.key();
+        let destination = ctx.accounts.destination.key();
+        require!(
+            destination != ctx.accounts.vault.key() && destination != ctx.accounts.game.key(),
+            BlackjackError::BadDestination
+        );
+        let amount = {
+            let game = &mut *ctx.accounts.game;
+            require!(game.status == GameStatus::Resolved, BlackjackError::BadState);
+            let owed = if claimant == game.player {
+                &mut game.player_owed
+            } else if claimant == game.dealer {
+                &mut game.dealer_owed
+            } else {
+                return err!(BlackjackError::NotYourTurn);
+            };
+            let amount = *owed;
+            require!(amount > 0, BlackjackError::NothingOwed);
+            *owed = 0;
+            amount
         };
-        settle(
+        pay(
             &ctx.accounts.game,
             &ctx.accounts.vault,
-            &ctx.accounts.player,
-            &ctx.accounts.dealer,
+            &ctx.accounts.destination,
             &ctx.accounts.system_program,
-            outcome,
-        )
+            amount,
+        )?;
+        msg!("withdrew {}", amount);
+        Ok(())
     }
 
     pub fn claim_timeout(ctx: Context<ClaimTimeout>) -> Result<()> {
@@ -359,6 +391,12 @@ pub mod blackjack {
         require!(
             ctx.accounts.game.status == GameStatus::Resolved,
             BlackjackError::BadState
+        );
+        // Closing erases the record of what the dealer is owed, and the dust sweep
+        // below would hand the dealer's share to the player.
+        require!(
+            ctx.accounts.game.player_owed == 0 && ctx.accounts.game.dealer_owed == 0,
+            BlackjackError::StillOwed
         );
         let dust = ctx.accounts.vault.lamports();
         if dust > 0 {
@@ -467,25 +505,43 @@ fn pay<'info>(
     )
 }
 
-fn settle<'info>(
-    game: &Account<'info, Game>,
-    vault: &SystemAccount<'info>,
-    player: &impl ToAccountInfo<'info>,
-    dealer: &impl ToAccountInfo<'info>,
-    system_program: &Program<'info, System>,
-    outcome: Outcome,
-) -> Result<()> {
-    let pot = vault.lamports();
+/// Record who is owed the vault. Nothing moves until a seat calls `withdraw`.
+fn credit(game: &mut Game, pot: u64) -> Result<()> {
+    let (player, dealer) = shares(game.outcome, pot).ok_or(BlackjackError::BadState)?;
+    game.player_owed = player;
+    game.dealer_owed = dealer;
+    Ok(())
+}
+
+/// (player, dealer). A push gives the odd lamport to the dealer, as before.
+fn shares(outcome: Outcome, pot: u64) -> Option<(u64, u64)> {
     match outcome {
-        Outcome::PlayerWins => pay(game, vault, player, system_program, pot),
-        Outcome::DealerWins => pay(game, vault, dealer, system_program, pot),
+        Outcome::PlayerWins => Some((pot, 0)),
+        Outcome::DealerWins => Some((0, pot)),
         Outcome::Push => {
             let half = pot / 2;
-            pay(game, vault, player, system_program, half)?;
-            let rest = vault.lamports();
-            pay(game, vault, dealer, system_program, rest)
+            Some((half, pot - half))
         }
-        Outcome::None => err!(BlackjackError::BadState),
+        Outcome::None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shares_always_add_up_to_the_pot() {
+        for pot in [0u64, 1, 20_000_000, 20_000_001, u64::MAX] {
+            for outcome in [Outcome::PlayerWins, Outcome::DealerWins, Outcome::Push] {
+                let (player, dealer) = shares(outcome, pot).unwrap();
+                assert_eq!(u128::from(player) + u128::from(dealer), u128::from(pot));
+            }
+        }
+        assert_eq!(shares(Outcome::Push, 21), Some((10, 11)));
+        assert_eq!(shares(Outcome::PlayerWins, 40), Some((40, 0)));
+        assert_eq!(shares(Outcome::DealerWins, 40), Some((0, 40)));
+        assert_eq!(shares(Outcome::None, 40), None);
     }
 }
 
@@ -554,8 +610,13 @@ pub struct CancelGame<'info> {
 pub struct PlayerMove<'info> {
     #[account(mut)]
     pub player: Signer<'info>,
-    #[account(mut, address = game.dealer)]
-    pub dealer: SystemAccount<'info>,
+    /// CHECK: Pinned to the dealer stored in the game. Nothing reads or pays it
+    /// here. It stays in the list so clients keep the same account order. It must
+    /// not be a `SystemAccount`: the dealer could assign their wallet to another
+    /// program, every player move would then fail the owner check, and the dealer
+    /// would collect the pot on the timeout.
+    #[account(address = game.dealer)]
+    pub dealer: UncheckedAccount<'info>,
     #[account(
         mut,
         has_one = player,
@@ -574,8 +635,10 @@ pub struct PlayerMove<'info> {
 
 #[derive(Accounts)]
 pub struct DealerMove<'info> {
-    #[account(mut, address = game.player)]
-    pub player: SystemAccount<'info>,
+    /// CHECK: Pinned to the player stored in the game. Never paid here. Not a
+    /// `SystemAccount`, for the same reason as the dealer in `PlayerMove`.
+    #[account(address = game.player)]
+    pub player: UncheckedAccount<'info>,
     #[account(mut)]
     pub dealer: Signer<'info>,
     #[account(
@@ -598,6 +661,28 @@ pub struct DealerMove<'info> {
 pub struct ClaimTimeout<'info> {
     #[account(mut)]
     pub claimant: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"game", game.player.as_ref(), &game.game_id.to_le_bytes()],
+        bump = game.bump
+    )]
+    pub game: Account<'info, Game>,
+    #[account(
+        mut,
+        seeds = [b"vault", game.key().as_ref()],
+        bump = game.vault_bump
+    )]
+    pub vault: SystemAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    pub claimant: Signer<'info>,
+    /// CHECK: Any account the claimant chooses to be paid into. It is only
+    /// credited. The instruction refuses the table and its vault.
+    #[account(mut)]
+    pub destination: UncheckedAccount<'info>,
     #[account(
         mut,
         seeds = [b"game", game.player.as_ref(), &game.game_id.to_le_bytes()],

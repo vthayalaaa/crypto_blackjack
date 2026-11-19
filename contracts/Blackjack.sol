@@ -37,7 +37,12 @@ contract Blackjack {
 
     mapping(uint256 => Game) private games;
     mapping(uint256 => uint256) public pots;
+    /// @notice Payouts that could not be delivered, waiting for `withdraw`.
+    mapping(address => uint256) public owed;
 
+    uint256 private constant PAY_GAS = 30_000;
+
+    event PayoutHeld(address indexed to, uint256 amount);
     event TableCreated(uint256 indexed id, address indexed player);
     event TableUpdated(uint256 indexed id);
 
@@ -357,9 +362,25 @@ contract Blackjack {
         }
     }
 
+    /// @dev A payout must never be able to undo the move that earned it. The
+    /// receiver gets a fixed amount of gas, and a transfer that fails is kept
+    /// in `owed` for `withdraw` instead of reverting. Otherwise a dealer
+    /// contract could refuse a push, let the player time out, and claim the pot.
     function pay(address to, uint256 amount) private {
         if (amount == 0) return;
-        (bool ok,) = to.call{value: amount}("");
+        (bool ok,) = to.call{value: amount, gas: PAY_GAS}("");
+        if (!ok) {
+            owed[to] += amount;
+            emit PayoutHeld(to, amount);
+        }
+    }
+
+    /// @notice Collect a payout that could not be delivered when the hand settled.
+    function withdraw() external lock {
+        uint256 amount = owed[msg.sender];
+        require(amount > 0, "nothing");
+        owed[msg.sender] = 0;
+        (bool ok,) = msg.sender.call{value: amount}("");
         require(ok, "pay");
     }
 }

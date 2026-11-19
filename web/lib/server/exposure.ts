@@ -21,7 +21,7 @@ const ETH_SEPOLIA_HISTORY = "https://eth-sepolia.blockscout.com";
 
 type Verdict = { at: number; listAt: number; hit: boolean };
 type ListSets = { fetchedAt: number; eth: Set<string>; sol: Set<string> };
-type ExplorerTx = { from?: string; to?: string; contractAddress?: string };
+type ExplorerTx = { from?: string; to?: string; contractAddress?: string; hash?: string };
 
 const memory = new Map<string, Verdict>();
 const inflight = new Map<string, Promise<boolean>>();
@@ -44,6 +44,32 @@ export function solanaAccounts(tx: unknown): string[] {
   const keys = raw.map((key) => typeof key === "string" ? key : (key as { pubkey?: string })?.pubkey ?? "");
   const loaded = record.meta?.loadedAddresses;
   return [...keys, ...(loaded?.writable ?? []), ...(loaded?.readonly ?? [])].filter((key) => key.length > 0);
+}
+
+/**
+ * The accounts in a transaction that count as this wallet's counterparties.
+ *
+ * Anyone can name any address in a transaction without its consent, so being
+ * listed beside a sanctioned address proves nothing. A signature does. When the
+ * wallet signed, every account it touched counts. When it did not, only the
+ * signers count: a listed address that signed really did send to this wallet.
+ */
+export function solanaParties(tx: unknown, wallet: string): string[] {
+  const accounts = solanaAccounts(tx);
+  const required = (tx as { transaction?: { message?: { header?: { numRequiredSignatures?: unknown } } } } | null)
+    ?.transaction?.message?.header?.numRequiredSignatures;
+  // Without the signer count there is no way to tell, so keep every account.
+  if (typeof required !== "number" || !Number.isInteger(required) || required < 1) return accounts;
+  const signers = accounts.slice(0, required);
+  return signers.includes(wallet) ? accounts : signers;
+}
+
+/**
+ * A token contract can log a transfer between any two addresses. Count a token
+ * row only when it belongs to a transaction this wallet sent.
+ */
+export function tokenRowCounts(row: ExplorerTx, signed: Set<string>): boolean {
+  return signed.has(row.hash?.trim().toLowerCase() ?? "");
 }
 
 /** A transaction the node did not return is not a clean result. */
@@ -110,8 +136,7 @@ export async function assertNoExposure(cluster: Cluster, wallet: string, list: L
 async function scan(cluster: Cluster, wallet: string, list: ListSets): Promise<boolean> {
   if (isEthCluster(cluster)) {
     const bases = cluster === "ethereum" ? [ETH_HISTORY] : [ETH_HISTORY, ETH_SEPOLIA_HISTORY];
-    const actions = ["txlist", "txlistinternal", "tokentx"];
-    const results = await Promise.all(bases.flatMap((base) => actions.map((action) => scanEth(base, action, wallet, list.eth))));
+    const results = await Promise.all(bases.map((base) => scanEthBase(base, wallet, list.eth)));
     return results.includes("hit");
   }
   const endpoints = cluster === "devnet" ? [SOL_HISTORY, SOL_DEVNET_HISTORY] : [SOL_HISTORY];
@@ -119,7 +144,28 @@ async function scan(cluster: Cluster, wallet: string, list: ListSets): Promise<b
   return results.includes("hit");
 }
 
-async function scanEth(base: string, action: string, wallet: string, sanctioned: Set<string>): Promise<"clear" | "hit"> {
+/** Plain and internal transfers first. They also say which transactions the wallet sent itself. */
+async function scanEthBase(base: string, wallet: string, sanctioned: Set<string>): Promise<"clear" | "hit"> {
+  const own = wallet.toLowerCase();
+  const signed = new Set<string>();
+  const [direct, internal] = await Promise.all([
+    scanEth(base, "txlist", wallet, sanctioned, (row) => {
+      if (row.from?.trim().toLowerCase() === own && row.hash) signed.add(row.hash.trim().toLowerCase());
+      return true;
+    }),
+    scanEth(base, "txlistinternal", wallet, sanctioned, () => true),
+  ]);
+  if (direct === "hit" || internal === "hit") return "hit";
+  return scanEth(base, "tokentx", wallet, sanctioned, (row) => tokenRowCounts(row, signed));
+}
+
+async function scanEth(
+  base: string,
+  action: string,
+  wallet: string,
+  sanctioned: Set<string>,
+  counts: (row: ExplorerTx) => boolean,
+): Promise<"clear" | "hit"> {
   return scanPages(async (page) => {
     const url = `${base}/api?${new URLSearchParams({
       module: "account",
@@ -131,7 +177,7 @@ async function scanEth(base: string, action: string, wallet: string, sanctioned:
     })}`;
     const body = await getJson(url);
     const rows = explorerRows(body);
-    const parties = rows.flatMap((row) => ethParties(row, wallet));
+    const parties = rows.filter(counts).flatMap((row) => ethParties(row, wallet));
     return { parties, full: rows.length >= ETH_PAGE };
   }, sanctioned, (value) => value.toLowerCase(), ETH_MAX_PAGES);
 }
@@ -144,7 +190,10 @@ async function scanSol(endpoint: string, wallet: string, sanctioned: Set<string>
     for (let index = 0; index < page.length; index += SOL_BATCH) {
       const slice = page.slice(index, index + SOL_BATCH);
       const txs = await solTransactions(endpoint, slice.map((row) => row.signature));
-      for (const tx of txs) accounts.push(...accountsOrRefuse(tx));
+      for (const tx of txs) {
+        accountsOrRefuse(tx);
+        accounts.push(...solanaParties(tx, wallet));
+      }
     }
     return { accounts, full: page.length >= SOL_PAGE, cursor: page[page.length - 1]?.signature };
   }, sanctioned, SOL_MAX_PAGES);

@@ -12,6 +12,11 @@ export function parseCluster(value: unknown): Cluster {
   throw new Error("Choose Solana devnet, Solana mainnet, Solana localnet, Ethereum Sepolia, or Ethereum mainnet.");
 }
 
+/** Solana mainnet and Ethereum mainnet are the only networks that require a funded wallet up front. */
+export function mainnetBuyIn(cluster: Cluster): boolean {
+  return cluster === "mainnet" || cluster === "ethereum";
+}
+
 export function quote(cluster: Cluster, text: string): { stake: bigint; due: bigint; buffer: bigint } {
   const eth = isEthCluster(cluster);
   const stake = parseDecimal(text, eth ? 18 : 9, eth ? ETH_MIN : SOL_MIN, eth ? ETH_MAX : SOL_MAX, eth ? "ETH" : "SOL");

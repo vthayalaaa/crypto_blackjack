@@ -27,6 +27,9 @@ export type GameAccount = {
   nextPlayerHit: number;
   deadline: bigint;
   createdAt: bigint;
+  /** Lamports each seat can take with `withdraw`. */
+  playerOwed: bigint;
+  dealerOwed: bigint;
 };
 
 export function u64(value: bigint): Uint8Array {
@@ -114,6 +117,8 @@ export function decodeGame(data: Uint8Array, disc: Uint8Array): GameAccount {
     nextPlayerHit: data[DISC + OFF.nextPlayerHit] ?? 0,
     deadline: view.getBigInt64(DISC + OFF.deadline, true),
     createdAt: view.getBigInt64(DISC + OFF.createdAt, true),
+    playerOwed: view.getBigUint64(DISC + OFF.playerOwed, true),
+    dealerOwed: view.getBigUint64(DISC + OFF.dealerOwed, true),
   };
 }
 
@@ -195,6 +200,22 @@ export async function claimTimeoutIx(args: {
   vault: PublicKey;
 }): Promise<TransactionInstruction> {
   return ix(moneyMetas(args.claimant, args.game, args.vault), await discriminator("claim_timeout"));
+}
+
+/** Take a seat's share of a resolved hand. `destination` defaults to the signer. */
+export async function withdrawIx(args: {
+  claimant: PublicKey;
+  game: PublicKey;
+  vault: PublicKey;
+  destination?: PublicKey;
+}): Promise<TransactionInstruction> {
+  return ix([
+    { pubkey: args.claimant, isSigner: true, isWritable: false },
+    { pubkey: args.destination ?? args.claimant, isSigner: false, isWritable: true },
+    { pubkey: args.game, isSigner: false, isWritable: true },
+    { pubkey: args.vault, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ], await discriminator("withdraw"));
 }
 
 async function moveIx(

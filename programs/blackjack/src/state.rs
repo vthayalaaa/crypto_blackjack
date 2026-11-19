@@ -1,11 +1,12 @@
 use anchor_lang::prelude::*;
 use blackjack_logic::GAME_PAYLOAD;
 
-// Borsh field order is the web decoder's layout. Sizes sum to GAME_PAYLOAD (1414):
+// Borsh field order is the web decoder's layout. Sizes sum to GAME_PAYLOAD (1430):
 // player 32, dealer 32, invite 32, stake 8, game_id 8, status 1, outcome 1,
 // player_commits 512, dealer_commits 512, player_cards 11, player_len 1,
 // dealer_cards 11, dealer_len 1, deck_mask 8, next_player_hit 1, deadline 8,
-// created_at 8, bump 1, vault_bump 1, staged 224, staged_len 1.
+// created_at 8, bump 1, vault_bump 1, staged 224, staged_len 1,
+// player_owed 8, dealer_owed 8.
 #[account]
 #[derive(InitSpace)]
 pub struct Game {
@@ -32,6 +33,11 @@ pub struct Game {
     /// Hit uses staged[0]. Showdown uses staged[0] as the hole and staged[1..7] as hits.
     pub staged: [[u8; 32]; 7],
     pub staged_len: u8,
+    /// Lamports each seat can take out of the vault with `withdraw` once the hand
+    /// is resolved. Settlement only records these. It never transfers to a seat
+    /// that is not signing, so no seat's account can make settlement fail.
+    pub player_owed: u64,
+    pub dealer_owed: u64,
 }
 
 impl Game {
@@ -81,4 +87,10 @@ pub enum BlackjackError {
     TooEarly,
     #[msg("The shoe could not deal a card")]
     DeckEmpty,
+    #[msg("Nothing is owed to this wallet")]
+    NothingOwed,
+    #[msg("A seat has not withdrawn its share yet")]
+    StillOwed,
+    #[msg("Withdraw to a wallet, not to the table or its vault")]
+    BadDestination,
 }

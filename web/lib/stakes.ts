@@ -6,7 +6,8 @@ type StakeCluster = "devnet" | "localnet" | "mainnet" | "sepolia" | "ethereum";
 export type LobbyCounts = {
   waiting: number;
   playing: number;
-  stakes: Record<string, number>;
+  /** Waiters at each buy-in, one map per table size ("2" through "7"). */
+  stakes: Record<string, Record<string, number>>;
 };
 
 export function chipUnits(cluster: StakeCluster, chip: string): bigint {

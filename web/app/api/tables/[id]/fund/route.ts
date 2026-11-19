@@ -1,5 +1,7 @@
-import { openHand, toView } from "../../../../../lib/server/engine";
+import { noteActivity } from "../../../../../lib/server/activity";
 import { assertPayment, settleMoney } from "../../../../../lib/server/cashier";
+import { openHand, startRefundClock, toView } from "../../../../../lib/server/engine";
+import { limit } from "../../../../../lib/server/limit";
 import { currentSeat, jsonError, loadTable, publish } from "../../../../../lib/server/http";
 import { assertWallet, sameWallet } from "../../../../../lib/server/keys";
 import { assertClear } from "../../../../../lib/server/sanctions";
@@ -12,8 +14,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const { id } = await context.params;
     if (!/^[A-Za-z0-9_-]{8,32}$/.test(id)) throw new Error("That table link is not valid.");
+    limit(request, "fund", 20);
     const seat = await currentSeat(id);
-    if (seat === "spectator") throw new Error("Sit down from this browser before sending the buy-in.");
+    if (typeof seat !== "number") throw new Error("Sit down from this browser before sending the buy-in.");
     const body = await request.json() as { wallet?: unknown; signature?: unknown };
     const wallet = typeof body.wallet === "string" ? body.wallet.trim() : "";
     const signature = typeof body.signature === "string" ? body.signature.trim() : "";
@@ -21,34 +24,48 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const existing = await loadTable(id);
     assertWallet(existing.cluster, wallet);
     await assertClear(existing.cluster, wallet);
-    if (existing.playerWallet) await assertClear(existing.cluster, existing.playerWallet);
-    if (existing.dealerWallet) await assertClear(existing.cluster, existing.dealerWallet);
-    const destination = seat === "player" ? existing.playerSeat : existing.dealerSeat;
+    for (const slot of existing.seats) {
+      if (slot.wallet) await assertClear(existing.cluster, slot.wallet);
+    }
+    const destination = existing.seats[seat]?.address ?? "";
     if (!destination) throw new Error("Take the seat before sending the buy-in.");
-    if (seat === "dealer" && existing.dealerWallet && !sameWallet(existing.cluster, existing.dealerWallet, wallet)) {
+    const seated = existing.seats[seat]?.wallet ?? "";
+    if (seated && !sameWallet(existing.cluster, seated, wallet)) {
       throw new Error("Send the buy-in from the wallet that sat down.");
     }
     await assertPayment(existing, signature, wallet, destination, BigInt(existing.due));
-    await update((db) => {
+    const funded = await update((db) => {
       const table = db.tables[id];
       if (!table) throw new Error("No table is using that id.");
-      if (table.fundSignatures.includes(signature)) return;
-      const already = seat === "player" ? table.playerFunded : table.dealerFunded;
-      if (already) throw new Error("This seat is already funded.");
-      const other = seat === "player" ? table.dealerWallet : table.playerWallet;
-      if (sameWallet(table.cluster, other, wallet)) throw new Error("Use a second wallet for the other seat.");
+      if (table.fundSignatures.includes(signature)) return null;
+      const slot = table.seats[seat];
+      if (!slot?.address) throw new Error("Take the seat before sending the buy-in.");
+      if (slot.funded) throw new Error("This seat is already funded.");
+      if (table.seats.some((other, index) => index !== seat && sameWallet(table.cluster, other.wallet, wallet))) {
+        throw new Error("Use a different wallet for each seat.");
+      }
       table.fundSignatures.push(signature);
-      if (seat === "player") {
-        table.playerFunded = true;
-        table.playerWallet = wallet;
-      } else {
-        table.dealerFunded = true;
-        table.dealerWallet = wallet;
-      }
-      if (table.playerFunded && table.dealerFunded && table.phase === "waiting" && table.dealerSeat) {
+      slot.funded = true;
+      slot.wallet = wallet;
+      delete table.kickVotes[String(seat)];
+      if (table.phase === "waiting" && table.seats.every((other) => other.address && other.funded)) {
         openHand(table, Date.now());
+      } else {
+        startRefundClock(table, Date.now());
       }
+      return { cluster: table.cluster, amount: table.due };
     });
+    if (funded) {
+      await noteActivity({
+        kind: "buyin",
+        table: id,
+        cluster: funded.cluster,
+        seat,
+        wallet,
+        amount: funded.amount,
+        signature,
+      });
+    }
     await settleMoney(id);
     const fresh = await loadTable(id);
     return publish(toView(fresh, seat));

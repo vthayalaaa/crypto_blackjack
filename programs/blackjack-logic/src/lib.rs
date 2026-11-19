@@ -25,7 +25,7 @@ pub const FULL_DECK_MASK: u64 = (1u64 << 52) - 1;
 
 /// Borsh payload of the on-chain `Game` account, excluding the 8-byte discriminator.
 /// Field order is the source of truth for `web/lib/layout.ts`.
-pub const GAME_PAYLOAD: usize = 1414;
+pub const GAME_PAYLOAD: usize = 1430;
 
 pub fn hand_total(cards: &[u8]) -> u8 {
     let mut total: u16 = 0;
@@ -159,7 +159,9 @@ mod tests {
             + 1
             + 1
             + 32 * 7
-            + 1;
+            + 1
+            + 8
+            + 8;
         assert_eq!(payload, GAME_PAYLOAD);
     }
 }

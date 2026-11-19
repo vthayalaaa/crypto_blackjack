@@ -6,13 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test lib/*.test.ts"
+    "test": "node --experimental-strip-types --test lib/*.test.ts",
+    "sweep": "node --experimental-strip-types scripts/sweep.ts",
+    "admin": "node --experimental-strip-types scripts/admin.ts"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-adapter-react-ui": "^0.9.39",
     "@solana/web3.js": "^1.98.4",
+    "@supabase/supabase-js": "^2.119.2",
     "@walletconnect/solana-adapter": "^0.0.9",
     "@walletconnect/universal-provider": "^2.23.7",
     "buffer": "^6.0.3",
