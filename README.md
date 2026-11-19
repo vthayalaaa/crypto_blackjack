@@ -1,5 +1,9 @@
 # Blackjack
 
+![Lobby](docs/lobby.png)
+
+![Table waiting for the second player](docs/table.png)
+
 Two wallets sit at one table on Solana devnet, Solana mainnet, Solana localnet, Ethereum Sepolia, or Ethereum mainnet. Each sends the same buy-in to a seat the server creates. They play one hand. The server pays the winner from those seats. A tie sends both buy-ins back. Mainnet moves real SOL or real ETH. Devnet, localnet, and Sepolia do not.
 
 There is no dealer. Both players choose hit or stand. Each player sees only their own cards until both have finished. The higher total takes the pot. A bust loses to a finished hand, and two busts or two equal totals send both buy-ins back. A 21 is a 21 whether it took two cards or more.
