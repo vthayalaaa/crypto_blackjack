@@ -38,6 +38,26 @@ A player who stops acting for 10 minutes is out of the hand. Another player can 
 
 The first buy-in starts a 15 minute wait. If the table has not filled and funded by then, any player who has paid can cancel it, and every paid buy-in is sent back. Player 1 can cancel at any time before the deal. Once every seat is taken, that wait becomes a 5 minute buy-in clock. The deal starts when every seat has paid. If the clock runs out first, any player who has paid can cancel, and every paid buy-in is sent back.
 
+## Table chat
+
+The chat is a pane under the felt. Anyone at the table can read it, including someone who has not sat down. A player can send a line only while the wallet that took the seat is connected. Disconnecting closes the box. The name on a line is that wallet's profile username, or the full wallet address when the username is blank.
+
+![Table chat under the felt](docs/chat/table-chat.png)
+
+Type a message and press Send. A line that starts with `/kick` is a command. It is not stored as that player's chat line. The table posts the result instead.
+
+```
+/kick Player 3
+/kick Ada
+/kick <wallet address>
+```
+
+![Typing a kick command](docs/chat/kick.png)
+
+`Player 3` is the seat number, starting at 1. `Ada` is the name shown in the chat. The third form is the player's wallet address. The short address on a seat opens the full address when you hover or tap it, and Copy puts that wallet on the clipboard.
+
+`/kick` removes a player who has sat down and has not bought in. It works only before the deal, and only on a table of three or more seats. The player who types it must already have bought in. More than two players have to have paid, and a strict majority of those paid players have to agree: 3 paid need 2 votes, 4 paid need 3, and 5 paid need 3. Each paid player has one current vote, and typing `/kick` again moves it. A two-player table cannot kick. One or two paid players cannot kick, even on a larger table. When the majority is reached, that seat opens and that player's session ends. If the named player buys in first, the votes against that seat are cleared. `/kicker` is an ordinary message.
+
 ## Running it with real money
 
 Set these on the server before opening a mainnet table:
